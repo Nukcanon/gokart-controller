@@ -18,7 +18,7 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +34,17 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+      # 방금 올린 파일을 GitHub가 바로 찾지 못해 배포가 실패하는 일이 있어, 잠깐 기다리고 실패하면 한 번 더 시도한다.
+      - name: Wait for artifact
+        run: sleep 10
       - name: Deploy
         id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: Wait before retry
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 30
+      - name: Deploy (retry)
+        id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4

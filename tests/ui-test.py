@@ -499,8 +499,27 @@ def _(browser):
     page.click("#connectBtn")
     page.click("#chooseBle")
     wait_js(page, "document.getElementById('statusPill').dataset.state === 'connecting'")
-    assert "브라우저가 띄운 창에서" in notice(page), notice(page)
-    assert page.evaluate("document.getElementById('notice').dataset.kind") == "info"
+    # 장치 고르는 창을 기다리는 동안: 무엇을 해야 하는지 팝업으로 안내
+    assert page.get_attribute("#waitDialog", "open") is not None
+    assert "Go_Kart_BLE_" in page.inner_text("#waitText") and "주소창 바로 아래" in page.inner_text("#waitText")
+    assert page.locator("#waitList li").count() == 2
+    assert page.is_visible("#waitArrow"), "PC에서는 창이 뜨는 쪽을 가리킴"
+    if SHOT_DIR:
+        page.screenshot(path=str(SHOT_DIR / "waiting.png"))
+    page.click("#waitCancel")
+    assert status(page) == "idle"
+    assert page.get_attribute("#waitDialog", "open") is None
+    assert "고르지 않았습니다" in notice(page)
+    assert page.is_enabled("#connectBtn")
+    context.close()
+    # 휴대폰: 화살표 없이, 권한 안내가 하나 더 붙는다
+    context, page = new_page(browser, {"hangChooser": True}, viewport={"width": 390, "height": 760}, has_touch=True, is_mobile=True)
+    page.click("#connectBtn")
+    page.click("#chooseBle")
+    wait_js(page, "document.getElementById('waitDialog').open")
+    assert not page.is_visible("#waitArrow")
+    assert page.locator("#waitList li").count() == 3
+    assert "근처 기기" in page.inner_text("#waitList")
     context.close()
 
 

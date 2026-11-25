@@ -44,7 +44,12 @@
     chooseClassic: $('chooseClassic'),
     bleHint: $('bleHint'),
     classicHint: $('classicHint'),
-    dialogCancel: $('dialogCancel')
+    dialogCancel: $('dialogCancel'),
+    waitDialog: $('waitDialog'),
+    waitArrow: $('waitArrow'),
+    waitText: $('waitText'),
+    waitList: $('waitList'),
+    waitCancel: $('waitCancel')
   };
 
   const settings = loadSettings();
@@ -226,11 +231,9 @@
     if (status !== 'idle') return;
     const seq = ++connectSeq;
     centerJoystick();
-    // 장치를 고르는 창은 브라우저가 띄운다. 창이 가려져 안 보일 때를 대비해 무엇을 기다리는지 알려 준다.
-    showNotice(type === 'ble'
-      ? '브라우저가 띄운 창에서 고카트(Go_Kart_BLE_…)를 고른 뒤 "페어링"을 눌러 주세요. 목록에 없으면 고카트 전원과 이 기기의 블루투스를 확인해 주세요.'
-      : '브라우저가 띄운 "직렬 포트" 창에서 고카트(Go_Kart_BT_…)를 고른 뒤 "연결"을 눌러 주세요. 목록에 없으면 먼저 기기의 블루투스 설정에서 고카트를 등록해 주세요.', 'info');
+    hideNotice();
     setStatus('connecting');
+    showWait(type); // 장치를 고르는 창은 브라우저가 띄운다. 놓치지 않도록 무엇을 해야 하는지 크게 알려 준다.
 
     const onLost = () => { if (link && link.transport === transport) dropLink('lost'); };
     const transport = type === 'ble' ? createBleTransport(onLost) : createSerialTransport(onLost);
@@ -248,6 +251,7 @@
       });
       link = { transport, sender, type, name };
       centerJoystick(); // 연결되는 순간에는 반드시 정지 상태에서 시작
+      hideWait();
       hideNotice();
       setStatus('connected');
       acquireWakeLock();
@@ -255,6 +259,7 @@
       transport.close();
       if (seq !== connectSeq) return;
       pendingTransport = null;
+      hideWait();
       setStatus('idle');
       const code = isCoded(error) ? error.code : 'connect';
       showNotice(MESSAGES[code] || MESSAGES.connect, code === 'cancel' ? 'info' : 'error');
@@ -294,6 +299,7 @@
   function handlePageHide() {
     connectSeq += 1;
     if (pendingTransport) { pendingTransport.close(); pendingTransport = null; }
+    hideWait();
     const current = link;
     link = null;
     centerJoystick();
@@ -429,6 +435,51 @@
     }
   }
 
+  function isPhone() {
+    if (navigator.userAgentData && navigator.userAgentData.mobile === true) return true;
+    // 주로 손가락으로 쓰는 기기(폰·패드)인지
+    return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  }
+
+  // 장치 고르는 창(브라우저가 띄움)을 기다리는 동안의 안내
+  function showWait(type) {
+    const phone = isPhone();
+    const where = phone ? '화면에 뜬 창' : '주소창 바로 아래(화면 왼쪽 위)에 뜬 작은 창';
+    els.waitText.textContent = type === 'ble'
+      ? `${where}에서 Go_Kart_BLE_…를 고르고 "페어링"을 눌러 주세요.`
+      : `${where}("직렬 포트")에서 Go_Kart_BT_…를 고르고 "연결"을 눌러 주세요.`;
+    const checks = type === 'ble'
+      ? ['고카트 전원이 켜져 있는지', '이 기기의 블루투스가 켜져 있는지']
+      : ['고카트 전원이 켜져 있는지', '기기의 블루투스 설정에서 고카트를 먼저 등록(페어링)했는지'];
+    if (phone && type === 'ble') checks.push('창 안에 "근처 기기"나 "위치" 권한을 허용하라는 글자가 보이면 눌러서 허용했는지');
+    els.waitList.textContent = '';
+    checks.forEach((text) => {
+      const item = document.createElement('li');
+      item.textContent = text;
+      els.waitList.appendChild(item);
+    });
+    els.waitArrow.hidden = phone;
+    if (els.waitDialog.open) return;
+    if (typeof els.waitDialog.showModal === 'function') els.waitDialog.showModal();
+    else els.waitDialog.setAttribute('open', '');
+  }
+
+  function hideWait() {
+    if (!els.waitDialog.open) return;
+    if (typeof els.waitDialog.close === 'function') els.waitDialog.close();
+    else els.waitDialog.removeAttribute('open');
+  }
+
+  // 기다리다가 그만둘 때. 브라우저의 창은 우리가 닫을 수 없으므로, 나중에 고르더라도 연결하지 않게만 한다.
+  function cancelConnect() {
+    if (status !== 'connecting') { hideWait(); return; }
+    connectSeq += 1;
+    if (pendingTransport) { pendingTransport.close(); pendingTransport = null; }
+    hideWait();
+    setStatus('idle');
+    showNotice(MESSAGES.cancel, 'info');
+  }
+
   function isBrave() {
     return Boolean(navigator.brave && typeof navigator.brave.isBrave === 'function');
   }
@@ -532,6 +583,8 @@
     els.chooseBle.addEventListener('click', () => choose('ble'));
     els.chooseClassic.addEventListener('click', () => choose('classic'));
     els.dialogCancel.addEventListener('click', closeConnectDialog);
+    els.waitCancel.addEventListener('click', cancelConnect);
+    els.waitDialog.addEventListener('cancel', (event) => { event.preventDefault(); cancelConnect(); }); // Esc 키
 
     els.pad.addEventListener('pointerdown', onPointerDown);
     els.pad.addEventListener('pointermove', onPointerMove);

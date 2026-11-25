@@ -10,9 +10,9 @@
   <meta name="description" content="블루투스(BLE·클래식)로 고카트를 조종하는 웹앱">
   <title>GoKart Controller</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="style.css?v=20261125-6">
-  <script defer src="core.js?v=20261125-6"></script>
-  <script defer src="app.js?v=20261125-6"></script>
+  <link rel="stylesheet" href="style.css?v=20261125-7">
+  <script defer src="core.js?v=20261125-7"></script>
+  <script defer src="app.js?v=20261125-7"></script>
 </head>
 <body>
   <a class="skip-link" href="#workspace">본문으로 바로가기</a>
@@ -136,6 +136,16 @@
       <small id="classicHint"></small>
     </button>
     <button class="button button-secondary" id="dialogCancel" type="button">취소</button>
+  </dialog>
+
+  <!-- 브라우저가 띄운 장치 고르는 창을 놓치지 않도록, 기다리는 동안 보여 주는 안내 -->
+  <dialog class="connect-dialog wait-dialog" id="waitDialog" aria-labelledby="wait-title">
+    <span class="wait-arrow" id="waitArrow" aria-hidden="true" hidden>↖</span>
+    <h2 id="wait-title">고카트를 골라 주세요</h2>
+    <p class="wait-text" id="waitText"></p>
+    <p class="wait-sub">목록에 고카트가 없으면 확인하세요.</p>
+    <ul class="wait-list" id="waitList"></ul>
+    <button class="button button-secondary" id="waitCancel" type="button">취소</button>
   </dialog>
 </body>
 </html>
