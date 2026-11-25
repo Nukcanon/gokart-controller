@@ -533,6 +533,25 @@ def _(browser):
     context.close()
 
 
+@test("아이폰: 연결할 수 없다는 것과 대신 쓸 기기를 처음부터 안내")
+def _(browser):
+    agent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    context, page = new_page(browser, {"unsupported": True}, user_agent=agent,
+                             viewport={"width": 390, "height": 760}, has_touch=True, is_mobile=True)
+    text = notice(page)
+    assert "아이폰" in text and "안드로이드" in text and "연결할 수 없습니다" in text, text
+    page.click("#connectBtn")
+    assert not page.evaluate("document.getElementById('connectDialog').open")
+    assert "아이폰" in notice(page)
+    # 전체 화면에서도 안내가 화면 안에 보인다.
+    no_native_fullscreen(page)
+    page.click("#fullscreenBtn")
+    box = page.locator("#notice").bounding_box()
+    assert box and box["y"] >= 0 and box["y"] + box["height"] <= 760, box
+    check_fullscreen_layout(page, "아이폰 안내", 200)
+    context.close()
+
+
 @test("설정: 앞뒤 반대로·회전이 적용되고 새로 열어도 유지")
 def _(browser):
     context, page = new_page(browser)

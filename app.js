@@ -13,6 +13,7 @@
 
   const MESSAGES = {
     unsupported: '이 브라우저에서는 블루투스를 쓸 수 없습니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요. (아이폰은 지원하지 않습니다)',
+    apple: '아이폰·아이패드에서는 고카트를 연결할 수 없습니다. 사파리와 크롬 모두 웹 페이지의 블루투스 기능이 없기 때문입니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요.',
     insecure: '보안 연결(https)에서만 블루투스를 쓸 수 있습니다. 주소가 https로 시작하는지 확인해 주세요.',
     cancel: '장치를 고르지 않았습니다. 다시 "연결하기"를 눌러 주세요.',
     blocked: '블루투스 사용이 막혀 있습니다. 주소창의 사이트 설정에서 블루투스를 허용한 뒤 다시 시도해 주세요.',
@@ -420,7 +421,7 @@
   function openConnectDialog() {
     if (isFramed()) { showNotice(MESSAGES.framed, 'error'); return; }
     if (!window.isSecureContext) { showNotice(MESSAGES.insecure, 'error'); return; }
-    if (!hasBle() && !hasSerial()) { showNotice(MESSAGES.unsupported, 'error'); return; }
+    if (!hasBle() && !hasSerial()) { showNotice(unsupportedMessage(), 'error'); return; }
     // 쓸 수 없는 방식도 누를 수는 있게 두고, 누르면 이유와 해결 방법을 알려 준다.
     // (눌러도 아무 반응이 없으면 사용자가 원인을 알 수 없다)
     setChoice(els.chooseBle, els.bleHint, bleProblem(),
@@ -483,6 +484,16 @@
     hideWait();
     setStatus('idle');
     showNotice(MESSAGES.cancel, 'info');
+  }
+
+  // 아이폰·아이패드인가(아이패드는 맥으로 표시되므로 터치 여부로 가린다)
+  function isApplePhone() {
+    const agent = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1);
+  }
+
+  function unsupportedMessage() {
+    return isApplePhone() ? MESSAGES.apple : MESSAGES.unsupported;
   }
 
   function isBrave() {
@@ -654,7 +665,7 @@
 
     if (isFramed()) showNotice(MESSAGES.framed, 'error');
     else if (!window.isSecureContext) showNotice(MESSAGES.insecure, 'error');
-    else if (!hasBle() && !hasSerial()) showNotice(MESSAGES.unsupported, 'error');
+    else if (!hasBle() && !hasSerial()) showNotice(unsupportedMessage(), 'error');
   }
 
   init();
