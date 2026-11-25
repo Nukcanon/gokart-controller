@@ -490,10 +490,20 @@ def _(browser):
     context, page = new_page(browser, {"btOff": True})
     page.click("#connectBtn")
     wait_js(page, "document.getElementById('chooseBle').dataset.state === 'off'")
-    assert "블루투스가 꺼져" in page.inner_text("#bleHint")
+    assert "블루투스가 꺼져 있으면 켜" in page.inner_text("#bleHint") and "근처 기기" in page.inner_text("#bleHint")
     page.click("#chooseBle")
     wait_js(page, "!document.getElementById('notice').hidden")
-    assert "블루투스를 켠 뒤" in notice(page)
+    assert "블루투스가 꺼져 있으면 켜" in notice(page)
+    context.close()
+    # 폰의 Brave: 블루투스가 켜져 있어도 "쓸 수 없음"으로 답한다. 블루투스를 켜라고 하지 않고 Brave 안내를 보여 준다.
+    context, page = new_page(browser, {"btOff": True, "brave": True}, viewport={"width": 390, "height": 760}, has_touch=True, is_mobile=True)
+    page.click("#connectBtn")
+    wait_js(page, "document.getElementById('chooseBle').dataset.state === 'off'")
+    hint = page.inner_text("#bleHint")
+    assert "Brave" in hint and "크롬으로 열면" in hint and "꺼져 있으면" not in hint, hint
+    page.click("#chooseBle")
+    wait_js(page, "!document.getElementById('notice').hidden")
+    assert "brave://flags/#brave-web-bluetooth-api" in notice(page) and status(page) == "idle"
     context.close()
     context, page = new_page(browser, {"hangChooser": True})
     page.click("#connectBtn")

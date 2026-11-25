@@ -64,7 +64,7 @@
   let activePointer = null;
   let wakeLock = null;
   let fullscreen = false; // 전체 화면 조종 중인가
-  let bleAdapterOff = false; // 이 기기의 블루투스가 꺼져 있는 것으로 확인됨
+  let bleUnavailable = false; // 브라우저가 "블루투스를 쓸 수 없음"이라고 답함(꺼짐, 권한 없음, 브라우저가 막음)
 
   // ---------- 공통 ----------
 
@@ -431,10 +431,10 @@
     if (typeof els.dialog.showModal === 'function') els.dialog.showModal();
     else els.dialog.setAttribute('open', '');
 
-    // 블루투스가 꺼져 있는지는 조금 뒤에 알 수 있다. 알게 되면 안내를 바꾼다.
+    // 블루투스를 쓸 수 있는지는 조금 뒤에 알 수 있다. 알게 되면 안내를 바꾼다.
     if (hasBle() && typeof navigator.bluetooth.getAvailability === 'function') {
       navigator.bluetooth.getAvailability().then((available) => {
-        bleAdapterOff = !available;
+        bleUnavailable = !available;
         if (els.dialog.open) setChoice(els.chooseBle, els.bleHint, bleProblem(), els.bleHint.dataset.normal || '');
       }).catch(() => { /* 알 수 없으면 그대로 둔다 */ });
     }
@@ -502,12 +502,16 @@
 
   // BLE를 쓸 수 없는 이유(쓸 수 있으면 빈 문자열)
   function bleProblem() {
+    // Brave는 BLE를 기본으로 꺼 둔다. PC에서는 기능 자체가 없고, 폰에서는 기능은 있지만 "쓸 수 없음"으로 답한다.
+    // (폰의 블루투스가 켜져 있어도 그렇게 답하므로, 블루투스를 켜라고 안내하면 틀린 안내가 된다)
+    const brave = 'Brave 브라우저는 BLE를 기본으로 꺼 둡니다. 크롬으로 열면 바로 됩니다. Brave에서 쓰려면 주소창에 brave://flags/#brave-web-bluetooth-api 를 입력해 Enabled로 바꾸고 브라우저를 다시 시작하세요.';
     if (!hasBle()) {
-      return isBrave()
-        ? 'Brave에서는 BLE가 기본으로 꺼져 있습니다. 주소창에 brave://flags/#brave-web-bluetooth-api 를 입력해 Enabled로 바꾸고 브라우저를 다시 시작하거나, 크롬·엣지로 열어 주세요.'
-        : '이 브라우저는 BLE를 지원하지 않습니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요.';
+      return isBrave() ? brave : '이 브라우저는 BLE를 지원하지 않습니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요.';
     }
-    if (bleAdapterOff) return '이 기기의 블루투스가 꺼져 있거나 없습니다. 블루투스를 켠 뒤 다시 눌러 주세요.';
+    if (bleUnavailable) {
+      return isBrave() ? brave
+        : '지금은 블루투스를 쓸 수 없습니다. 이 기기의 블루투스가 꺼져 있으면 켜 주세요. 켜져 있다면 이 브라우저 앱에 "근처 기기" 권한을 허용한 뒤 다시 눌러 주세요.';
+    }
     return '';
   }
 
