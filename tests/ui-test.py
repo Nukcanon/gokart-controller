@@ -588,6 +588,130 @@ def _(browser):
     context.close()
 
 
+FULLSCREEN_LAYOUT = """(() => {
+  const box = (selector) => { const r = document.querySelector(selector).getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height, right: r.right, bottom: r.bottom }; };
+  const shown = (selector) => { const r = document.querySelector(selector).getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  return {
+    mode: document.documentElement.dataset.fullscreen,
+    label: document.getElementById('fullscreenLabel').textContent,
+    view: { w: window.innerWidth, h: window.innerHeight },
+    scrolls: document.documentElement.scrollHeight > window.innerHeight + 1 || document.documentElement.scrollWidth > window.innerWidth + 1,
+    header: shown('.site-header'), footer: shown('.site-footer'), guide: shown('.guide-panel'),
+    exit: box('#fullscreenBtn'), connect: box('#connectBtn'), pill: box('#statusPill'),
+    pad: box('#pad'), settings: box('.settings-panel'),
+    flipX: box('.switch-row:nth-of-type(1)'), flipY: box('.switch-row:nth-of-type(2)'), turn: box('.segmented'),
+    last: box('.segmented label:last-of-type span'),
+  };
+})()"""
+
+
+def check_fullscreen_layout(page, label, min_pad):
+    """전체 화면: 끝내기 버튼·조이스틱·조종 설정이 스크롤 없이 한 화면에 있고, 설정은 맨 아래에 있다."""
+    info = page.evaluate(FULLSCREEN_LAYOUT)
+    view = info["view"]
+    assert info["mode"] == "true" and info["label"] == "전체 화면 끝내기", (label, info["mode"], info["label"])
+    assert not info["header"] and not info["footer"] and not info["guide"], f"{label}: 머리말·안내가 남아 있음"
+    assert not info["scrolls"], f"{label}: 스크롤이 생김"
+    for name in ("exit", "connect", "pill", "pad", "settings", "flipX", "flipY", "turn", "last"):
+        b = info[name]
+        assert b["w"] > 0 and b["h"] > 0, f"{label}: {name} 안 보임"
+        assert b["x"] >= -0.5 and b["y"] >= -0.5 and b["right"] <= view["w"] + 0.5 and b["bottom"] <= view["h"] + 0.5, f"{label}: {name} 화면 밖 {b}"
+    pad, settings = info["pad"], info["settings"]
+    assert abs(pad["w"] - pad["h"]) < 1 and pad["w"] >= min_pad, f"{label}: 조이스틱 크기 {pad}"
+    assert pad["bottom"] <= settings["y"] + 0.5, f"{label}: 조이스틱이 설정과 겹침"
+    assert info["exit"]["bottom"] <= pad["y"] + 0.5 and info["connect"]["bottom"] <= pad["y"] + 0.5, f"{label}: 버튼이 조이스틱과 겹침"
+    assert view["h"] - settings["bottom"] <= 16, f"{label}: 설정이 맨 아래에 있지 않음 {settings}"
+    assert info["exit"]["h"] >= 40 and info["last"]["h"] >= 36, f"{label}: 누르는 곳이 너무 작음"
+    return info
+
+
+def no_native_fullscreen(page):
+    """브라우저의 전체 화면 기능이 없는 기기(아이폰)를 흉내 낸다."""
+    page.evaluate("delete Element.prototype.requestFullscreen; delete Element.prototype.webkitRequestFullscreen")
+    assert page.evaluate("!document.documentElement.requestFullscreen && !document.documentElement.webkitRequestFullscreen")
+
+
+@test("전체 화면(폰 세로, 브라우저 기능 없는 기기): 설정은 아래에, 끝내기 버튼으로 나옴, 조종·설정 동작")
+def _(browser):
+    context, page = new_page(browser, viewport={"width": 390, "height": 760}, has_touch=True, is_mobile=True)
+    no_native_fullscreen(page)
+    assert page.inner_text("#fullscreenLabel") == "전체 화면"
+    page.click("#fullscreenBtn")
+    check_fullscreen_layout(page, "세로", 300)
+    if SHOT_DIR:
+        page.screenshot(path=str(SHOT_DIR / "fullscreen-portrait.png"))
+    # 전체 화면에서 연결·조종
+    connect(page)
+    check_fullscreen_layout(page, "세로(연결됨)", 300)
+    cdp = context.new_cdp_session(page)
+    x, y = pad_point(page, 0.5, 0.02)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y, "id": 1}]})
+    page.wait_for_timeout(300)
+    held = writes(page)
+    assert len(held) >= 4 and (held[-1]["x"], held[-1]["y"]) == (100, 200), held[-1:]
+    # 누른 채로 전체 화면을 끝내면 정지한다(화면 배치가 바뀌므로).
+    page.evaluate("document.getElementById('fullscreenBtn').click()")
+    assert page.evaluate("document.documentElement.dataset.fullscreen") == "false"
+    assert_stopped(page, "전체 화면 끝내기")
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    assert page.evaluate("(() => { const r = document.querySelector('.site-header').getBoundingClientRect(); return r.height > 0; })()"), "머리말이 돌아오지 않음"
+    assert page.inner_text("#fullscreenLabel") == "전체 화면"
+    # 전체 화면에서 설정을 바꾸면 적용된다.
+    page.click("#fullscreenBtn")
+    page.click(".switch-row:nth-of-type(2)")
+    assert page.evaluate("document.getElementById('invertY').checked")
+    before = len(writes(page))
+    x, y = pad_point(page, 0.5, 0.02)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y, "id": 2}]})
+    page.wait_for_timeout(250)
+    sent = writes(page)[before:]
+    assert sent and sent[-1]["y"] == 0, sent[-1:]
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    assert_stopped(page, "전체 화면 손 뗌")
+    context.close()
+
+
+@test("전체 화면(폰 가로): 작은 폰에서도 조이스틱·설정·끝내기 버튼이 한 화면에")
+def _(browser):
+    for width, height, min_pad in ((760, 390, 200), (640, 360, 170), (360, 640, 250)):
+        context, page = new_page(browser, viewport={"width": width, "height": height}, has_touch=True, is_mobile=True)
+        no_native_fullscreen(page)
+        page.click("#fullscreenBtn")
+        check_fullscreen_layout(page, f"{width}x{height}", min_pad)
+        # 오류 안내가 떠도 화면 밖으로 밀려나지 않는다.
+        page.evaluate("(() => { const n = document.getElementById('notice'); n.textContent = '연결이 끊어졌습니다. 고카트 전원을 확인하고 다시 연결하세요.'; n.dataset.kind = 'error'; n.hidden = false; })()")
+        check_fullscreen_layout(page, f"{width}x{height}(안내)", min_pad - 70)
+        if SHOT_DIR and width != 640:
+            page.evaluate("document.getElementById('notice').hidden = true")
+            page.screenshot(path=str(SHOT_DIR / f"fullscreen-{width}x{height}.png"))
+        context.close()
+
+
+@test("전체 화면(브라우저 기능 있는 기기): 뒤로 가기로 풀리면 화면도 돌아오고, 버튼으로 끝내면 브라우저 전체 화면도 풀림")
+def _(browser):
+    context, page = new_page(browser, viewport={"width": 390, "height": 760}, has_touch=True, is_mobile=True)
+    page.click("#fullscreenBtn")
+    wait_js(page, "document.fullscreenElement === document.documentElement")
+    assert page.evaluate("document.documentElement.dataset.fullscreen") == "true"
+    page.evaluate("document.exitFullscreen()")  # 뒤로 가기·Esc와 같은 효과
+    wait_js(page, "document.documentElement.dataset.fullscreen === 'false'")
+    assert page.inner_text("#fullscreenLabel") == "전체 화면"
+    page.click("#fullscreenBtn")
+    wait_js(page, "document.fullscreenElement === document.documentElement")
+    page.click("#fullscreenBtn")
+    wait_js(page, "document.fullscreenElement === null")
+    assert page.evaluate("document.documentElement.dataset.fullscreen") == "false"
+    # 연결 창은 전체 화면에서도 뜬다.
+    page.click("#fullscreenBtn")
+    wait_js(page, "document.fullscreenElement === document.documentElement")
+    page.click("#connectBtn")
+    page.wait_for_selector("#connectDialog[open]")
+    box = page.locator("#chooseBle").bounding_box()
+    assert box and box["width"] > 0, "전체 화면에서 연결 창이 보이지 않음"
+    context.close()
+
+
 def main():
     if SHOT_DIR:
         SHOT_DIR.mkdir(parents=True, exist_ok=True)

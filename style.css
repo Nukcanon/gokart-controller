@@ -246,7 +246,7 @@ button { touch-action: manipulation; }
 
 /* ---------- 버튼·안내 ---------- */
 /* 연결 버튼은 조이스틱 위에 둔다(연결과 조종이 한 화면에 들어오게). */
-.primary-controls { display: grid; gap: 8px; padding: 0 0 12px; }
+.primary-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 0 0 12px; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 48px; padding: 10px 18px; border: 0; border-radius: var(--radius-control); cursor: pointer; font-size: .92rem; font-weight: 750; transition: transform .16s ease, background .16s ease; }
 .button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }
@@ -363,6 +363,56 @@ button { touch-action: manipulation; }
   .eyebrow { display: none; }
   .pad-stage { padding: 10px 12px; }
   .pad { width: min(100%, 70vh); min-width: 180px; }
+}
+
+/* ---------- 전체 화면 조종 ---------- */
+/* 머리말·안내를 숨기고 [버튼 / 상태 / 조이스틱 / 조종 설정]만 화면에 꽉 채운다. 스크롤은 없고 조종 설정은 늘 아래에 있다.
+   브라우저의 전체 화면 기능이 없는 기기(아이폰)에서도 이 배치만으로 동작하고, 끝내는 버튼은 늘 위에 보인다. */
+html[data-fullscreen="true"] { overflow: hidden; overscroll-behavior: none; }
+html[data-fullscreen="true"] body { overflow: hidden; }
+html[data-fullscreen="true"] :is(.site-header, .site-footer, .skip-link, .app-heading > div:first-child, .control-help, .guide-panel, .settings-panel .card-heading, .settings-panel .panel-note) { display: none; }
+html[data-fullscreen="true"] :is(.app-heading, .app-grid, .control-card, .side-column) { display: contents; }
+html[data-fullscreen="true"] .workspace {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "buttons" "status" "notice" "pad" "settings";
+  width: auto;
+  margin: 0;
+  padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  background: var(--page);
+}
+html[data-fullscreen="true"] .primary-controls { grid-area: buttons; padding: 0 0 8px; }
+html[data-fullscreen="true"] .status-pill { grid-area: status; justify-self: center; margin-bottom: 8px; }
+html[data-fullscreen="true"] .notice { grid-area: notice; margin: 0 0 8px; }
+/* 조이스틱은 남은 자리에 들어가는 가장 큰 정사각형 */
+html[data-fullscreen="true"] .pad-stage { grid-area: pad; min-height: 0; padding: 8px; container-type: size; }
+html[data-fullscreen="true"] .pad { width: min(100cqw, 100cqh, 640px); min-width: 0; }
+html[data-fullscreen="true"] .settings-panel { grid-area: settings; margin-top: 8px; padding: 8px; box-shadow: 0 -6px 24px rgba(32, 65, 105, .14); }
+html[data-fullscreen="true"] .option-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+html[data-fullscreen="true"] .switch-row { min-height: 44px; padding: 6px 10px; font-size: .84rem; }
+html[data-fullscreen="true"] .segmented { grid-column: 1 / -1; padding: 8px 10px; }
+html[data-fullscreen="true"] .segmented legend { margin-bottom: 6px; font-size: .8rem; }
+/* 폰을 눕혔을 때: 위 한 줄(상태·버튼), 아래 한 줄(조종 설정) */
+@media (orientation: landscape) and (max-height: 520px) {
+  html[data-fullscreen="true"] .workspace {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "status buttons" "notice notice" "pad pad" "settings settings";
+    column-gap: 8px;
+  }
+  html[data-fullscreen="true"] .status-pill { justify-self: start; align-self: start; }
+  html[data-fullscreen="true"] .primary-controls { grid-template-columns: auto auto; }
+  html[data-fullscreen="true"] .primary-controls .button { min-height: 40px; padding: 6px 14px; }
+  html[data-fullscreen="true"] .pad-stage { padding: 4px; }
+  html[data-fullscreen="true"] .settings-panel { padding: 6px; }
+  html[data-fullscreen="true"] .option-list { grid-template-columns: auto auto minmax(0, 1fr); }
+  html[data-fullscreen="true"] .switch-row { gap: 8px; padding: 6px 8px; font-size: .8rem; }
+  html[data-fullscreen="true"] .segmented { grid-column: auto; grid-template-columns: auto repeat(4, minmax(0, 1fr)); align-items: center; padding: 2px 8px; }
+  html[data-fullscreen="true"] .segmented legend { width: 6.6em; grid-column: auto; margin: 0 2px 0 0; font-size: .74rem; line-height: 1.25; }
 }
 
 @media (prefers-reduced-motion: reduce) {

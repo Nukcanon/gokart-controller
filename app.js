@@ -31,6 +31,8 @@
     statusText: $('statusText'),
     connectBtn: $('connectBtn'),
     connectLabel: $('connectLabel'),
+    fullscreenBtn: $('fullscreenBtn'),
+    fullscreenLabel: $('fullscreenLabel'),
     pad: $('pad'),
     knob: $('knob'),
     coordX: $('coordX'),
@@ -60,6 +62,7 @@
   let connectSeq = 0;
   let activePointer = null;
   let wakeLock = null;
+  let fullscreen = false; // 전체 화면 조종 중인가
   let bleAdapterOff = false; // 이 기기의 블루투스가 꺼져 있는 것으로 확인됨
 
   // ---------- 공통 ----------
@@ -537,6 +540,41 @@
     if (lock) lock.release().catch(() => {});
   }
 
+  // ---------- 전체 화면 ----------
+  // 화면 배치는 이 앱이 직접 바꾸고(style.css의 data-fullscreen), 브라우저의 전체 화면 기능은 있을 때만 함께 쓴다.
+  // 그래서 그 기능이 없는 기기(아이폰)에서도 되고, 끝내는 버튼이 늘 화면에 있어 뒤로 가기 버튼이 없어도 나올 수 있다.
+
+  function nativeFullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+
+  function setFullscreen(on) {
+    if (fullscreen === on) return;
+    centerJoystick(); // 화면 배치가 바뀌는 동안 움직이지 않도록 정지
+    fullscreen = on;
+    const root = document.documentElement;
+    root.dataset.fullscreen = on ? 'true' : 'false';
+    els.fullscreenLabel.textContent = on ? '전체 화면 끝내기' : '전체 화면';
+    els.fullscreenBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    try {
+      if (on) {
+        window.scrollTo(0, 0);
+        const request = root.requestFullscreen || root.webkitRequestFullscreen;
+        const result = request && !nativeFullscreenElement() ? request.call(root) : null;
+        if (result && result.catch) result.catch(() => {}); // 거부돼도 화면 배치만으로 계속 쓴다
+      } else if (nativeFullscreenElement()) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        const result = exit ? exit.call(document) : null;
+        if (result && result.catch) result.catch(() => {});
+      }
+    } catch (error) { /* 브라우저 전체 화면을 못 써도 화면 배치는 바뀌어 있다 */ }
+  }
+
+  // 뒤로 가기·Esc 등으로 브라우저의 전체 화면이 풀리면 화면 배치도 함께 되돌린다.
+  function onNativeFullscreenChange() {
+    if (!nativeFullscreenElement()) setFullscreen(false);
+  }
+
   // ---------- 설정 ----------
 
   function loadSettings() {
@@ -582,6 +620,9 @@
       if (status === 'connected') disconnect();
       else if (status === 'idle') openConnectDialog();
     });
+    els.fullscreenBtn.addEventListener('click', () => setFullscreen(!fullscreen));
+    document.addEventListener('fullscreenchange', onNativeFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', onNativeFullscreenChange);
     els.chooseBle.addEventListener('click', () => choose('ble'));
     els.chooseClassic.addEventListener('click', () => choose('classic'));
     els.dialogCancel.addEventListener('click', closeConnectDialog);
