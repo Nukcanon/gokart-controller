@@ -1,0 +1,554 @@
+# 화면 시험: 가짜 블루투스를 끼워 실제 브라우저에서 동작을 확인한다.
+# 실행: python tests/ui-test.py [스크린샷 폴더]   (playwright가 설치된 파이썬 필요)
+import base64
+import mimetypes
+import sys
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright
+
+ROOT = Path(__file__).resolve().parent.parent
+ORIGIN = "http://localhost:8765"
+SHOT_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+PIXEL = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
+
+MOCK = r"""
+(() => {
+  const log = { writes: [], bleDisconnects: 0, serialClosed: 0, serialAborted: 0, requestOptions: null, wakeLocks: 0 };
+  const mock = { hangWrites: false, failWrites: false, cancelChooser: false, noService: false, unsupported: false, usbPort: false };
+  try { Object.assign(mock, JSON.parse(sessionStorage.getItem('mock') || '{}')); } catch (e) {}
+  window.__log = log;
+  window.__mock = mock;
+
+  const record = (via, data) => {
+    if (mock.hangWrites) return new Promise(() => {});
+    if (mock.failWrites) return Promise.reject(new DOMException('gone', 'NetworkError'));
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data.buffer || data);
+    log.writes.push({ t: performance.now(), x: bytes[0], y: bytes[1], n: bytes.length, via });
+    return Promise.resolve();
+  };
+
+  if (mock.unsupported) {
+    delete Navigator.prototype.bluetooth;
+    delete Navigator.prototype.serial;
+    return;
+  }
+
+  const device = new EventTarget();
+  device.name = 'Go_Kart_BLE_TEST';
+  device.gatt = {
+    connected: false,
+    async connect() { this.connected = true; return this; },
+    disconnect() { this.connected = false; log.bleDisconnects += 1; },
+    async getPrimaryService() {
+      if (mock.noService) throw new DOMException('no service', 'NotFoundError');
+      return { async getCharacteristic() { return { writeValueWithoutResponse: (data) => record('ble', data) }; } };
+    }
+  };
+  window.__device = device;
+  Object.defineProperty(navigator, 'bluetooth', { configurable: true, value: {
+    async requestDevice(options) {
+      log.requestOptions = options;
+      if (mock.cancelChooser) throw new DOMException('cancelled', 'NotFoundError');
+      return device;
+    }
+  } });
+
+  const port = new EventTarget();
+  port.getInfo = () => (mock.usbPort ? { usbVendorId: 0x1a86, usbProductId: 0x7523 } : { bluetoothServiceClassId: '00001101-0000-1000-8000-00805f9b34fb' });
+  port.open = async (options) => { log.serialOpen = options; };
+  port.close = async () => { log.serialClosed += 1; };
+  port.writable = { getWriter: () => ({
+    ready: Promise.resolve(),
+    write: (data) => record('serial', data),
+    abort: async () => { log.serialAborted += 1; },
+    releaseLock() {}
+  }) };
+  window.__port = port;
+  Object.defineProperty(navigator, 'serial', { configurable: true, value: {
+    async requestPort() {
+      if (mock.cancelChooser) throw new DOMException('cancelled', 'NotFoundError');
+      return port;
+    }
+  } });
+
+  Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: {
+    async request() { log.wakeLocks += 1; const lock = new EventTarget(); lock.release = async () => { log.wakeLocks -= 1; }; return lock; }
+  } });
+})();
+"""
+
+results = []
+problems = []
+
+
+def serve(route):
+    url = route.request.url
+    if not url.startswith(ORIGIN):
+        route.fulfill(status=200, content_type="image/png", body=PIXEL)
+        return
+    name = url[len(ORIGIN):].split("?")[0].lstrip("/") or "index.html"
+    if name == "__host.html":  # 다른 사이트가 이 화면을 끼워 넣은 상황을 흉내 낸다.
+        route.fulfill(status=200, content_type="text/html",
+                      body='<!doctype html><iframe id="inner" src="/index.html" width="900" height="700"></iframe>')
+        return
+    target = ROOT / name
+    if not target.is_file():
+        route.fulfill(status=404, body="not found")
+        return
+    kind = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    if target.suffix == ".js":
+        kind = "text/javascript"
+    route.fulfill(status=200, content_type=kind, body=target.read_bytes())
+
+
+def new_page(browser, mock=None, **context_options):
+    context = browser.new_context(**context_options)
+    context.route("**/*", serve)
+    context.add_init_script(
+        "try { if (!sessionStorage.getItem('mock')) sessionStorage.setItem('mock', %r); } catch (e) {}" % (
+            __import__("json").dumps(mock or {})
+        )
+    )
+    context.add_init_script(MOCK)
+    page = context.new_page()
+    page.on("console", lambda m: problems.append(f"console {m.type}: {m.text}") if m.type in ("error", "warning") else None)
+    page.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
+    page.goto(ORIGIN + "/index.html")
+    wait_js(page, "document.getElementById('connectLabel').textContent === '연결하기'")
+    return context, page
+
+
+def wait_js(page, expression, timeout=5000):
+    """조건이 참이 될 때까지 기다린다. (보안 정책이 문자열 실행을 막아 wait_for_function을 쓸 수 없음)"""
+    waited = 0
+    while not page.evaluate(expression):
+        if waited >= timeout:
+            raise AssertionError(f"시간 초과: {expression}")
+        page.wait_for_timeout(30)
+        waited += 30
+
+
+def connect(page, kind="ble"):
+    page.click("#connectBtn")
+    page.wait_for_selector("#connectDialog[open]")
+    page.click("#chooseBle" if kind == "ble" else "#chooseClassic")
+    wait_js(page, "document.getElementById('statusPill').dataset.state === 'connected'")
+
+
+def pad_point(page, fx, fy):
+    page.locator("#pad").scroll_into_view_if_needed()
+    box = page.locator("#pad").bounding_box()
+    return box["x"] + box["width"] * fx, box["y"] + box["height"] * fy
+
+
+def press(page, fx=0.5, fy=0.01):
+    x, y = pad_point(page, fx, fy)
+    page.mouse.move(x, y)
+    page.mouse.down()
+
+
+def writes(page):
+    return page.evaluate("window.__log.writes")
+
+
+def status(page):
+    return page.evaluate("document.getElementById('statusPill').dataset.state")
+
+
+def notice(page):
+    return page.evaluate("(() => { const n = document.getElementById('notice'); return n.hidden ? '' : n.textContent; })()")
+
+
+def coords(page):
+    return page.evaluate("[document.getElementById('coordX').textContent, document.getElementById('coordY').textContent]")
+
+
+def assert_stopped(page, label):
+    """마지막 전송이 정지 값이고, 그 뒤로 더 보내지 않는다."""
+    page.wait_for_timeout(450)
+    first = writes(page)
+    page.wait_for_timeout(400)
+    second = writes(page)
+    assert first, f"{label}: 전송 기록 없음"
+    assert (first[-1]["x"], first[-1]["y"]) == (100, 100), f"{label}: 마지막 값 {first[-1]}"
+    assert len(first) == len(second), f"{label}: 멈춘 뒤에도 전송 {len(first)} → {len(second)}"
+    assert coords(page) == ["100", "100"], f"{label}: 좌표 표시 {coords(page)}"
+
+
+def test(name):
+    def wrap(fn):
+        results.append((name, fn))
+        return fn
+    return wrap
+
+
+@test("처음 화면: 연결 안 됨, 좌표 100/100, 안내 없음")
+def _(browser):
+    context, page = new_page(browser)
+    assert status(page) == "idle"
+    assert coords(page) == ["100", "100"]
+    assert notice(page) == ""
+    assert page.inner_text("#statusText") == "연결 안 됨"
+    # 연결 버튼과 조이스틱이 스크롤 없이 한 화면(1280x720)에 들어온다.
+    button = page.locator("#connectBtn").bounding_box()
+    pad = page.locator("#pad").bounding_box()
+    assert button["y"] >= 0 and pad["y"] + pad["height"] <= 720, (button, pad)
+    if SHOT_DIR:
+        page.set_viewport_size({"width": 1280, "height": 800})
+        page.screenshot(path=str(SHOT_DIR / "desktop.png"))
+    context.close()
+
+
+@test("BLE 연결: 상태 표시, 장치 이름 필터, 화면 켜짐 유지")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    assert page.inner_text("#statusText") == "BLE 연결됨 · Go_Kart_BLE_TEST"
+    assert page.inner_text("#connectLabel") == "연결 끊기"
+    options = page.evaluate("window.__log.requestOptions")
+    assert options["filters"] == [{"namePrefix": "Go_Kart_"}], options
+    assert options["optionalServices"] == ["4fafc201-1fb5-459e-8fcc-c5c9c331914b"]
+    assert writes(page) == [], "연결만으로는 아무것도 보내지 않음"
+    wait_js(page, "window.__log.wakeLocks === 1")
+    context.close()
+
+
+@test("누르고 가만히 있어도 계속 보내고(간격 150ms 미만), 떼면 정지 후 전송 중단")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    press(page)
+    page.wait_for_timeout(700)
+    held = writes(page)
+    assert len(held) >= 9, f"전송 수 {len(held)}"
+    assert all(w["n"] == 2 and w["y"] == 200 and 99 <= w["x"] <= 101 for w in held), held[:3]
+    gaps = [b["t"] - a["t"] for a, b in zip(held, held[1:])]
+    assert max(gaps) < 150, f"최대 간격 {max(gaps):.0f}ms"
+    assert coords(page)[1] == "200"
+    page.mouse.up()
+    assert_stopped(page, "손 뗌")
+    tail = writes(page)[len(held):]
+    neutral = [w for w in tail if (w["x"], w["y"]) == (100, 100)]
+    assert len(neutral) == 4, f"정지 값 {len(neutral)}번"
+    context.close()
+
+
+@test("움직이면 값이 바뀌고 범위를 벗어나도 0~200")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    press(page, 0.5, 0.5)
+    x, y = pad_point(page, 1.6, 1.4)  # 조이스틱 밖 오른쪽 아래
+    page.mouse.move(x, y, steps=5)
+    page.wait_for_timeout(200)
+    last = writes(page)[-1]
+    assert (last["x"], last["y"]) == (200, 0), last
+    page.mouse.up()
+    assert_stopped(page, "밖에서 손 뗌")
+    context.close()
+
+
+@test("화면이 가려지면 즉시 정지, 누른 채 움직여도 다시 보내지 않음")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    press(page)
+    page.wait_for_timeout(200)
+    page.evaluate("""() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    x, y = pad_point(page, 0.9, 0.9)
+    page.mouse.move(x, y, steps=4)
+    assert_stopped(page, "화면 가려짐")
+    assert status(page) == "connected"
+    page.mouse.up()
+    context.close()
+
+
+@test("창이 초점을 잃으면 즉시 정지")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    press(page)
+    page.wait_for_timeout(200)
+    page.evaluate("window.dispatchEvent(new Event('blur'))")
+    assert_stopped(page, "초점 잃음")
+    page.mouse.up()
+    context.close()
+
+
+@test("버튼을 뗀 사실을 놓쳐도(눌린 버튼 없는 이동) 즉시 정지")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    press(page)
+    page.wait_for_timeout(200)
+    page.evaluate("""() => document.getElementById('pad').dispatchEvent(
+      new PointerEvent('pointermove', { pointerId: 1, pointerType: 'mouse', buttons: 0, bubbles: true, clientX: 5, clientY: 5 }))""")
+    assert_stopped(page, "뗀 사실 놓침")
+    page.mouse.up()
+    context.close()
+
+
+@test("창을 닫을 때(pagehide): 정지 값 전송 + 연결 끊기")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    press(page)
+    page.wait_for_timeout(200)
+    page.evaluate("window.dispatchEvent(new Event('pagehide'))")
+    assert page.evaluate("window.__log.bleDisconnects") == 1
+    assert status(page) == "idle"
+    assert_stopped(page, "창 닫힘")
+    page.mouse.up()
+    context.close()
+
+
+@test("연결이 저절로 끊기면 안내하고 조작을 보내지 않음")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    press(page)
+    page.wait_for_timeout(150)
+    before = len(writes(page))
+    page.evaluate("window.__device.dispatchEvent(new Event('gattserverdisconnected'))")
+    page.wait_for_timeout(300)
+    assert status(page) == "idle"
+    assert "끊어졌습니다" in notice(page)
+    assert len(writes(page)) == before
+    assert page.evaluate("window.__log.wakeLocks") == 0
+    page.mouse.up()
+    context.close()
+
+
+@test("고카트가 응답하지 않으면 1.5초쯤 뒤 연결을 끊고 안내")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    page.evaluate("window.__mock.hangWrites = true")
+    press(page)
+    wait_js(page, "document.getElementById('statusPill').dataset.state === 'idle'", timeout=4000)
+    assert "응답하지 않아" in notice(page)
+    assert page.evaluate("window.__log.bleDisconnects") == 1
+    page.mouse.up()
+    context.close()
+
+
+@test("전송 실패 시 연결을 끊고 안내")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    page.evaluate("window.__mock.failWrites = true")
+    press(page)
+    wait_js(page, "document.getElementById('statusPill').dataset.state === 'idle'", timeout=2000)
+    assert "끊어졌습니다" in notice(page)
+    page.mouse.up()
+    context.close()
+
+
+@test("연결 끊기 버튼: 끊고 다시 연결 가능")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page)
+    page.click("#connectBtn")
+    wait_js(page, "document.getElementById('statusPill').dataset.state === 'idle'")
+    assert page.evaluate("window.__log.bleDisconnects") == 1
+    assert notice(page) == ""
+    connect(page)
+    press(page)
+    page.wait_for_timeout(150)
+    assert writes(page), "다시 연결한 뒤 전송됨"
+    page.mouse.up()
+    context.close()
+
+
+@test("클래식(시리얼) 연결: 전송·정지·닫기")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page, "classic")
+    assert page.inner_text("#statusText") == "클래식 연결됨"
+    press(page, 0.01, 0.5)
+    page.wait_for_timeout(300)
+    held = writes(page)
+    assert held and all(w["via"] == "serial" and w["x"] == 0 for w in held), held[:2]
+    page.mouse.up()
+    assert_stopped(page, "클래식 손 뗌")
+    page.click("#connectBtn")
+    wait_js(page, "window.__log.serialClosed === 1")
+    assert status(page) == "idle"
+    context.close()
+
+
+@test("클래식: 창을 닫을 때 정지 값을 보낸 뒤 닫는다")
+def _(browser):
+    context, page = new_page(browser)
+    connect(page, "classic")
+    press(page)
+    page.wait_for_timeout(200)
+    page.evaluate("window.dispatchEvent(new Event('pagehide'))")
+    wait_js(page, "window.__log.serialClosed === 1")
+    assert_stopped(page, "클래식 창 닫힘")
+    page.mouse.up()
+    context.close()
+
+
+@test("장치를 고르지 않으면 안내만 하고 대기 상태")
+def _(browser):
+    context, page = new_page(browser, {"cancelChooser": True})
+    page.click("#connectBtn")
+    page.click("#chooseBle")
+    wait_js(page, "!document.getElementById('notice').hidden")
+    assert "고르지 않았습니다" in notice(page)
+    assert page.evaluate("document.getElementById('notice').dataset.kind") == "info"
+    assert status(page) == "idle"
+    assert page.is_enabled("#connectBtn")
+    context.close()
+
+
+@test("고카트가 아닌 장치는 연결을 끊고 안내")
+def _(browser):
+    context, page = new_page(browser, {"noService": True})
+    page.click("#connectBtn")
+    page.click("#chooseBle")
+    wait_js(page, "!document.getElementById('notice').hidden")
+    assert "고카트가 아닌 장치" in notice(page), notice(page)
+    assert page.evaluate("window.__log.bleDisconnects") == 1, page.evaluate("window.__log.bleDisconnects")
+    assert status(page) == "idle", status(page)
+    context.close()
+
+
+@test("클래식: USB 장치를 고르면 열지 않고 신호도 보내지 않음")
+def _(browser):
+    context, page = new_page(browser, {"usbPort": True})
+    page.click("#connectBtn")
+    page.click("#chooseClassic")
+    wait_js(page, "!document.getElementById('notice').hidden")
+    assert "USB로 연결된 장치" in notice(page), notice(page)
+    assert status(page) == "idle"
+    assert page.evaluate("window.__log.serialOpen") is None, "포트를 열지 않음"
+    assert writes(page) == []
+    context.close()
+
+
+@test("보안 정책: 문서 안 스크립트·외부 전송이 막히고, 다른 사이트에 끼워지면 연결을 거부")
+def _(browser):
+    context, page = new_page(browser)
+    result = page.evaluate("""async () => {
+      const out = {};
+      const s = document.createElement('script');
+      s.textContent = 'window.__inlineRan = true';
+      document.head.appendChild(s);
+      out.inline = window.__inlineRan === true;
+      try { await fetch('https://example.com/x', { mode: 'no-cors' }); out.fetch = true; } catch (e) { out.fetch = false; }
+      const ext = document.createElement('script');
+      ext.src = 'https://example.com/evil.js';
+      out.external = await new Promise((resolve) => { ext.onload = () => resolve(true); ext.onerror = () => resolve(false); document.head.appendChild(ext); });
+      return out;
+    }""")
+    assert result == {"inline": False, "fetch": False, "external": False}, result
+    problems[:] = [p for p in problems if "Content Security Policy" not in p and "example.com" not in p]
+    # 끼워진 화면: 다른 문서의 iframe 안에서는 연결 창이 열리지 않아야 한다.
+    page.goto(ORIGIN + "/__host.html")
+    inner = page.frame_locator("#inner")
+    inner.locator("#notice").wait_for(state="visible", timeout=5000)
+    assert "끼워진 화면" in inner.locator("#notice").inner_text()
+    inner.locator("#connectBtn").click()
+    assert inner.locator("#connectDialog").get_attribute("open") is None
+    context.close()
+
+
+@test("지원하지 않는 브라우저: 처음부터 안내, 연결 창을 열지 않음")
+def _(browser):
+    context, page = new_page(browser, {"unsupported": True})
+    assert "쓸 수 없습니다" in notice(page)
+    page.click("#connectBtn")
+    assert not page.evaluate("document.getElementById('connectDialog').open")
+    context.close()
+
+
+@test("설정: 앞뒤 반대로·회전이 적용되고 새로 열어도 유지")
+def _(browser):
+    context, page = new_page(browser)
+    page.click("label.switch-row:has(#invertY)")
+    connect(page)
+    press(page)
+    page.wait_for_timeout(150)
+    assert writes(page)[-1]["y"] == 0, writes(page)[-1]
+    page.mouse.up()
+    page.wait_for_timeout(100)
+    page.click(".segmented label:has(input[value='90'])")
+    press(page)  # 위로: 반전으로 y=0 → 90도 회전하면 x=200
+    page.wait_for_timeout(150)
+    last = writes(page)[-1]
+    assert (last["x"], last["y"]) == (200, 100), last
+    page.mouse.up()
+    page.reload()
+    wait_js(page, "document.getElementById('connectLabel').textContent === '연결하기'")
+    assert page.is_checked("#invertY") and not page.is_checked("#invertX")
+    assert page.is_checked("input[name='rotation'][value='90']")
+    context.close()
+
+
+@test("터치: 누르면 전송, 터치가 취소되면 즉시 정지")
+def _(browser):
+    context, page = new_page(browser, viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True)
+    if SHOT_DIR:
+        page.screenshot(path=str(SHOT_DIR / "phone.png"), full_page=True)
+    connect(page)
+    cdp = context.new_cdp_session(page)
+    x, y = pad_point(page, 0.5, 0.02)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y, "id": 1}]})
+    page.wait_for_timeout(300)
+    held = writes(page)
+    assert len(held) >= 4 and held[-1]["y"] == 200, held[-1:]
+    if SHOT_DIR:
+        page.screenshot(path=str(SHOT_DIR / "phone-driving.png"))
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchCancel", "touchPoints": []})
+    assert_stopped(page, "터치 취소")
+    context.close()
+
+
+@test("폰을 눕힌 화면에서도 조이스틱이 화면 안에 들어온다")
+def _(browser):
+    context, page = new_page(browser, viewport={"width": 844, "height": 390}, has_touch=True, is_mobile=True)
+    page.evaluate("document.getElementById('pad').scrollIntoView({ block: 'center' })")
+    box = page.locator("#pad").bounding_box()
+    assert box["height"] <= 390 and abs(box["width"] - box["height"]) < 1, box
+    knob = page.locator("#knob").bounding_box()
+    assert abs((knob["x"] + knob["width"] / 2) - (box["x"] + box["width"] / 2)) < 1, "손잡이 가운데"
+    if SHOT_DIR:
+        page.screenshot(path=str(SHOT_DIR / "phone-landscape.png"))
+    context.close()
+
+
+def main():
+    if SHOT_DIR:
+        SHOT_DIR.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            for name, fn in results:
+                try:
+                    fn(browser)
+                    print(f"통과  {name}")
+                except Exception as error:  # noqa: BLE001
+                    failed += 1
+                    print(f"실패  {name}\n      {str(error).splitlines()[0] if str(error) else type(error).__name__}")
+        finally:
+            browser.close()
+    if problems:
+        failed += 1
+        print("콘솔 오류:")
+        for line in problems[:10]:
+            print("      " + line)
+    print(f"\n{len(results) - failed if failed <= len(results) else 0}/{len(results)} 통과")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
