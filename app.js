@@ -48,6 +48,7 @@
     waitDialog: $('waitDialog'),
     waitArrow: $('waitArrow'),
     waitText: $('waitText'),
+    waitPin: $('waitPin'),
     waitList: $('waitList'),
     waitCancel: $('waitCancel')
   };
@@ -459,6 +460,7 @@
       els.waitList.appendChild(item);
     });
     els.waitArrow.hidden = phone;
+    els.waitPin.hidden = type !== 'ble'; // 비밀번호는 BLE 고카트에서만 쓴다
     if (els.waitDialog.open) return;
     if (typeof els.waitDialog.showModal === 'function') els.waitDialog.showModal();
     else els.waitDialog.setAttribute('open', '');

@@ -10,9 +10,9 @@
   <meta name="description" content="블루투스(BLE·클래식)로 고카트를 조종하는 웹앱">
   <title>GoKart Controller</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="style.css?v=20261125-7">
-  <script defer src="core.js?v=20261125-7"></script>
-  <script defer src="app.js?v=20261125-7"></script>
+  <link rel="stylesheet" href="style.css?v=20261125-8">
+  <script defer src="core.js?v=20261125-8"></script>
+  <script defer src="app.js?v=20261125-8"></script>
 </head>
 <body>
   <a class="skip-link" href="#workspace">본문으로 바로가기</a>
@@ -114,6 +114,7 @@
             <li>목록에서 Go_Kart_로 시작하는 장치를 고릅니다.</li>
             <li>조이스틱을 누른 채 움직여 조종합니다.</li>
           </ol>
+          <p class="panel-note">비밀번호를 켠 고카트(BLE)는 처음 연결할 때 스마트폰·PC가 6자리 비밀번호를 묻습니다. 한 번 입력하면 그 기기에서는 다시 묻지 않습니다.</p>
           <p class="panel-note">안드로이드 폰·PC의 크롬 또는 엣지에서 동작합니다. Brave는 BLE를 따로 켜야 합니다(연결하기를 누르면 방법이 나옵니다). 아이폰은 지원하지 않습니다.</p>
         </section>
       </aside>
@@ -143,6 +144,7 @@
     <span class="wait-arrow" id="waitArrow" aria-hidden="true" hidden>↖</span>
     <h2 id="wait-title">고카트를 골라 주세요</h2>
     <p class="wait-text" id="waitText"></p>
+    <p class="wait-note" id="waitPin" hidden>비밀번호를 묻는 창이 뜨면 고카트에 설정한 6자리 숫자를 입력하세요. (비밀번호를 켠 고카트만 묻습니다)</p>
     <p class="wait-sub">목록에 고카트가 없으면 확인하세요.</p>
     <ul class="wait-list" id="waitList"></ul>
     <button class="button button-secondary" id="waitCancel" type="button">취소</button>

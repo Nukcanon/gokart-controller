@@ -315,6 +315,8 @@ button { touch-action: manipulation; }
 
 /* ---------- 장치 고르기를 기다리는 동안의 안내 ---------- */
 .wait-text { margin: 0; color: #243047; font-size: .95rem; font-weight: 700; line-height: 1.6; }
+.wait-note { margin: 2px 0 0; padding: 9px 11px; border: 1px solid #d3e6f8; border-radius: var(--radius-item); color: #23527c; background: #f2f8fe; font-size: .82rem; line-height: 1.55; }
+.wait-note[hidden] { display: none; }
 .wait-sub { margin: 6px 0 0; color: var(--muted); font-size: .8rem; font-weight: 750; }
 .wait-list { display: grid; gap: 4px; margin: 0; padding-left: 20px; color: #42526a; font-size: .84rem; line-height: 1.55; }
 /* PC에서는 브라우저의 창이 화면 왼쪽 위(주소창 아래)에 작게 뜬다. 그쪽을 가리킨다. */

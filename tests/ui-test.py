@@ -504,6 +504,7 @@ def _(browser):
     assert "Go_Kart_BLE_" in page.inner_text("#waitText") and "주소창 바로 아래" in page.inner_text("#waitText")
     assert page.locator("#waitList li").count() == 2
     assert page.is_visible("#waitArrow"), "PC에서는 창이 뜨는 쪽을 가리킴"
+    assert page.is_visible("#waitPin") and "6자리" in page.inner_text("#waitPin"), "BLE는 비밀번호 안내를 보여 줌"
     if SHOT_DIR:
         page.screenshot(path=str(SHOT_DIR / "waiting.png"))
     page.click("#waitCancel")
