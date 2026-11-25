@@ -71,7 +71,8 @@ MOCK = r"""
     releaseLock() {}
   }) };
   window.__port = port;
-  Object.defineProperty(navigator, 'serial', { configurable: true, value: {
+  if (mock.noSerial) delete Navigator.prototype.serial;
+  else Object.defineProperty(navigator, 'serial', { configurable: true, value: {
     async requestPort() {
       if (mock.cancelChooser) throw new DOMException('cancelled', 'NotFoundError');
       return port;
@@ -549,16 +550,60 @@ def _(browser):
     context, page = new_page(browser, {"unsupported": True}, user_agent=agent,
                              viewport={"width": 390, "height": 760}, has_touch=True, is_mobile=True)
     text = notice(page)
-    assert "아이폰" in text and "안드로이드" in text and "연결할 수 없습니다" in text, text
+    assert "아이폰" in text and "Bluefy" in text and "연결할 수 없습니다" in text and "크롬으로 열어" not in text, text
     page.click("#connectBtn")
     assert not page.evaluate("document.getElementById('connectDialog').open")
-    assert "아이폰" in notice(page)
+    assert "Bluefy" in notice(page)
     # 전체 화면에서도 안내가 화면 안에 보인다.
     no_native_fullscreen(page)
     page.click("#fullscreenBtn")
     box = page.locator("#notice").bounding_box()
     assert box and box["y"] >= 0 and box["y"] + box["height"] <= 760, box
     check_fullscreen_layout(page, "아이폰 안내", 200)
+    context.close()
+    # 아이폰의 웹 블루투스 브라우저 앱(BLE만 있음): 안내 없이 열리고 BLE로 연결된다. 클래식은 쓸 수 없다고 알려 준다.
+    context, page = new_page(browser, {"noSerial": True}, user_agent=agent,
+                             viewport={"width": 390, "height": 760}, has_touch=True, is_mobile=True)
+    assert notice(page) == "", notice(page)
+    page.click("#connectBtn")
+    page.wait_for_selector("#connectDialog[open]")
+    assert page.get_attribute("#chooseBle", "data-state") == "on"
+    hint = page.inner_text("#classicHint")
+    assert page.get_attribute("#chooseClassic", "data-state") == "off" and "아이폰" in hint and "BLE 고카트" in hint, hint
+    page.click("#chooseBle")
+    wait_js(page, "document.getElementById('statusPill').dataset.state === 'connected'")
+    press(page)
+    page.wait_for_timeout(200)
+    assert writes(page) and writes(page)[-1]["y"] == 200
+    page.mouse.up()
+    assert_stopped(page, "아이폰 BLE")
+    context.close()
+
+
+@test("크롬이 아닌 브라우저: 안 될 때 크롬으로 열라고 안내, 크롬에서는 그 말을 붙이지 않음")
+def _(browser):
+    context, page = new_page(browser, {"unsupported": True})
+    assert "크롬으로 열어 주세요" in notice(page), notice(page)
+    context.close()
+    context, page = new_page(browser, {"btOff": True, "noSerial": True})
+    page.click("#connectBtn")
+    wait_js(page, "document.getElementById('chooseBle').dataset.state === 'off'")
+    assert "계속 안 되면 크롬으로 열어 주세요" in page.inner_text("#bleHint")
+    assert "크롬(최신 버전)으로 열어 주세요" in page.inner_text("#classicHint")
+    context.close()
+    context, page = new_page(browser)
+    connect_fail ="document.getElementById('statusPill').dataset.state === 'idle' && !document.getElementById('notice').hidden"
+    page.evaluate("(() => { window.__device.gatt.connect = async () => { throw new DOMException('fail', 'NetworkError'); }; })()")
+    page.click("#connectBtn")
+    page.click("#chooseBle")
+    wait_js(page, connect_fail)
+    assert "연결하지 못했습니다" in notice(page) and "계속 안 되면 크롬으로 열어 주세요" in notice(page), notice(page)
+    # 구글 크롬이면 붙이지 않는다.
+    page.evaluate("Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { brands: [{ brand: 'Google Chrome', version: '140' }], mobile: false } })")
+    page.click("#connectBtn")
+    page.click("#chooseBle")
+    wait_js(page, connect_fail)
+    assert "연결하지 못했습니다" in notice(page) and "크롬으로 열어" not in notice(page), notice(page)
     context.close()
 
 

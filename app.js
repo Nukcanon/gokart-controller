@@ -12,8 +12,9 @@
   const STORAGE_KEY = 'gokart-controller:settings:v1';
 
   const MESSAGES = {
-    unsupported: '이 브라우저에서는 블루투스를 쓸 수 없습니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요. (아이폰은 지원하지 않습니다)',
-    apple: '아이폰·아이패드에서는 고카트를 연결할 수 없습니다. 사파리와 크롬 모두 웹 페이지의 블루투스 기능이 없기 때문입니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요.',
+    unsupported: '이 브라우저에서는 블루투스를 쓸 수 없습니다. 크롬으로 열어 주세요. (안드로이드 폰 또는 PC)',
+    apple: '아이폰·아이패드의 사파리·크롬에서는 고카트를 연결할 수 없습니다. App Store에서 "Bluefy" 앱을 설치하고, 그 앱에서 이 주소를 열어 주세요. (BLE 고카트만 됩니다)',
+    appleClassic: '아이폰·아이패드에서는 클래식 블루투스 고카트를 쓸 수 없습니다. BLE 고카트를 쓰거나, 안드로이드 폰·PC의 크롬으로 열어 주세요.',
     insecure: '보안 연결(https)에서만 블루투스를 쓸 수 있습니다. 주소가 https로 시작하는지 확인해 주세요.',
     cancel: '장치를 고르지 않았습니다. 다시 "연결하기"를 눌러 주세요.',
     blocked: '블루투스 사용이 막혀 있습니다. 주소창의 사이트 설정에서 블루투스를 허용한 뒤 다시 시도해 주세요.',
@@ -267,7 +268,9 @@
       hideWait();
       setStatus('idle');
       const code = isCoded(error) ? error.code : 'connect';
-      showNotice(MESSAGES[code] || MESSAGES.connect, code === 'cancel' ? 'info' : 'error');
+      let text = MESSAGES[code] || MESSAGES.connect;
+      if (text === MESSAGES.connect || code === 'timeout') text += chromeTip();
+      showNotice(text, code === 'cancel' ? 'info' : 'error');
     }
   }
 
@@ -500,23 +503,38 @@
     return Boolean(navigator.brave && typeof navigator.brave.isBrave === 'function');
   }
 
+  // 구글 크롬인가(크롬을 바탕으로 만든 다른 브라우저는 제외)
+  function isChrome() {
+    const data = navigator.userAgentData;
+    if (data && Array.isArray(data.brands)) return data.brands.some((item) => item.brand === 'Google Chrome');
+    const agent = navigator.userAgent || '';
+    return /Chrome\//.test(agent) && !/Edg\/|OPR\/|SamsungBrowser|Whale/.test(agent) && !isBrave();
+  }
+
+  // 크롬이 아닌 브라우저에서 잘 안 될 때 덧붙이는 안내. (아이폰은 크롬에서도 안 되므로 제외)
+  function chromeTip() {
+    return isChrome() || isApplePhone() ? '' : ' 계속 안 되면 크롬으로 열어 주세요.';
+  }
+
   // BLE를 쓸 수 없는 이유(쓸 수 있으면 빈 문자열)
   function bleProblem() {
     // Brave는 BLE를 기본으로 꺼 둔다. PC에서는 기능 자체가 없고, 폰에서는 기능은 있지만 "쓸 수 없음"으로 답한다.
     // (폰의 블루투스가 켜져 있어도 그렇게 답하므로, 블루투스를 켜라고 안내하면 틀린 안내가 된다)
     const brave = 'Brave 브라우저는 BLE를 기본으로 꺼 둡니다. 크롬으로 열면 바로 됩니다. Brave에서 쓰려면 주소창에 brave://flags/#brave-web-bluetooth-api 를 입력해 Enabled로 바꾸고 브라우저를 다시 시작하세요.';
     if (!hasBle()) {
-      return isBrave() ? brave : '이 브라우저는 BLE를 지원하지 않습니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요.';
+      if (isApplePhone()) return MESSAGES.apple;
+      return isBrave() ? brave : '이 브라우저는 BLE를 지원하지 않습니다. 크롬으로 열어 주세요.';
     }
     if (bleUnavailable) {
       return isBrave() ? brave
-        : '지금은 블루투스를 쓸 수 없습니다. 이 기기의 블루투스가 꺼져 있으면 켜 주세요. 켜져 있다면 이 브라우저 앱에 "근처 기기" 권한을 허용한 뒤 다시 눌러 주세요.';
+        : '지금은 블루투스를 쓸 수 없습니다. 이 기기의 블루투스가 꺼져 있으면 켜 주세요. 켜져 있다면 이 브라우저 앱에 "근처 기기" 권한을 허용한 뒤 다시 눌러 주세요.' + chromeTip();
     }
     return '';
   }
 
   function classicProblem() {
-    return hasSerial() ? '' : '이 브라우저는 클래식 블루투스를 지원하지 않습니다. 안드로이드 폰이나 PC의 크롬·엣지(최신 버전)로 열어 주세요.';
+    if (hasSerial()) return '';
+    return isApplePhone() ? MESSAGES.appleClassic : '이 브라우저는 클래식 블루투스를 지원하지 않습니다. 크롬(최신 버전)으로 열어 주세요.';
   }
 
   function setChoice(button, hint, problem, normalText) {
