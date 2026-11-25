@@ -35,6 +35,7 @@ MOCK = r"""
     delete Navigator.prototype.serial;
     return;
   }
+  if (mock.brave) Object.defineProperty(navigator, 'brave', { configurable: true, value: { isBrave: async () => true } });
 
   const device = new EventTarget();
   device.name = 'Go_Kart_BLE_TEST';
@@ -48,9 +49,12 @@ MOCK = r"""
     }
   };
   window.__device = device;
-  Object.defineProperty(navigator, 'bluetooth', { configurable: true, value: {
+  if (mock.noBle) delete Navigator.prototype.bluetooth;
+  else Object.defineProperty(navigator, 'bluetooth', { configurable: true, value: {
+    async getAvailability() { return !mock.btOff; },
     async requestDevice(options) {
       log.requestOptions = options;
+      if (mock.hangChooser) return new Promise(() => {});
       if (mock.cancelChooser) throw new DOMException('cancelled', 'NotFoundError');
       return device;
     }
@@ -458,6 +462,45 @@ def _(browser):
     assert "끼워진 화면" in inner.locator("#notice").inner_text()
     inner.locator("#connectBtn").click()
     assert inner.locator("#connectDialog").get_attribute("open") is None
+    context.close()
+
+
+@test("BLE가 꺼진 브라우저(Brave): 눌러도 반응 없는 일이 없고, 켜는 방법을 안내")
+def _(browser):
+    context, page = new_page(browser, {"noBle": True, "brave": True})
+    assert notice(page) == "", "클래식은 쓸 수 있으므로 처음에는 안내 없음"
+    page.click("#connectBtn")
+    page.wait_for_selector("#connectDialog[open]")
+    assert page.get_attribute("#chooseBle", "data-state") == "off"
+    assert "brave://flags/#brave-web-bluetooth-api" in page.inner_text("#bleHint")
+    assert page.get_attribute("#chooseClassic", "data-state") == "on"
+    assert page.is_enabled("#chooseBle"), "누를 수 있어야 함"
+    page.click("#chooseBle")
+    wait_js(page, "!document.getElementById('notice').hidden")
+    assert "brave://flags/#brave-web-bluetooth-api" in notice(page), notice(page)
+    assert status(page) == "idle"
+    assert page.get_attribute("#connectDialog", "open") is None
+    connect(page, "classic")  # 클래식은 그대로 연결됨
+    assert notice(page) == "", "연결되면 안내를 지움"
+    context.close()
+
+
+@test("블루투스가 꺼진 기기: BLE 선택에 켜라는 안내, 연결 중에는 무엇을 기다리는지 안내")
+def _(browser):
+    context, page = new_page(browser, {"btOff": True})
+    page.click("#connectBtn")
+    wait_js(page, "document.getElementById('chooseBle').dataset.state === 'off'")
+    assert "블루투스가 꺼져" in page.inner_text("#bleHint")
+    page.click("#chooseBle")
+    wait_js(page, "!document.getElementById('notice').hidden")
+    assert "블루투스를 켠 뒤" in notice(page)
+    context.close()
+    context, page = new_page(browser, {"hangChooser": True})
+    page.click("#connectBtn")
+    page.click("#chooseBle")
+    wait_js(page, "document.getElementById('statusPill').dataset.state === 'connecting'")
+    assert "브라우저가 띄운 창에서" in notice(page), notice(page)
+    assert page.evaluate("document.getElementById('notice').dataset.kind") == "info"
     context.close()
 
 

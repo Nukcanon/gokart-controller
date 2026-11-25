@@ -305,6 +305,10 @@ button { touch-action: manipulation; }
 .choice { display: grid; gap: 3px; min-height: 64px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-item); color: var(--ink); background: var(--surface-soft); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease; }
 .choice:hover:not(:disabled) { border-color: #b9d9f7; background: #fafdff; box-shadow: 0 8px 20px rgba(0, 102, 204, .09); transform: translateY(-1px); }
 .choice:disabled { cursor: not-allowed; opacity: .55; }
+/* 지금은 쓸 수 없는 방식: 누를 수는 있고, 이유를 붉은 글씨로 보여 준다. */
+.choice[data-state="off"] { border-color: #f3c6cd; background: #fdf6f7; }
+.choice[data-state="off"] strong { color: var(--muted); }
+.choice[data-state="off"] small { color: #8f2535; }
 .choice strong { color: #243047; font-size: .92rem; line-height: 1.35; }
 .choice small { color: var(--muted); font-size: .76rem; line-height: 1.45; }
 .connect-dialog .button { margin-top: 4px; }

@@ -54,6 +54,7 @@
   let connectSeq = 0;
   let activePointer = null;
   let wakeLock = null;
+  let bleAdapterOff = false; // 이 기기의 블루투스가 꺼져 있는 것으로 확인됨
 
   // ---------- 공통 ----------
 
@@ -225,7 +226,10 @@
     if (status !== 'idle') return;
     const seq = ++connectSeq;
     centerJoystick();
-    hideNotice();
+    // 장치를 고르는 창은 브라우저가 띄운다. 창이 가려져 안 보일 때를 대비해 무엇을 기다리는지 알려 준다.
+    showNotice(type === 'ble'
+      ? '브라우저가 띄운 창에서 고카트(Go_Kart_BLE_…)를 고른 뒤 "페어링"을 눌러 주세요. 목록에 없으면 고카트 전원과 이 기기의 블루투스를 확인해 주세요.'
+      : '브라우저가 띄운 "직렬 포트" 창에서 고카트(Go_Kart_BT_…)를 고른 뒤 "연결"을 눌러 주세요. 목록에 없으면 먼저 기기의 블루투스 설정에서 고카트를 등록해 주세요.', 'info');
     setStatus('connecting');
 
     const onLost = () => { if (link && link.transport === transport) dropLink('lost'); };
@@ -244,6 +248,7 @@
       });
       link = { transport, sender, type, name };
       centerJoystick(); // 연결되는 순간에는 반드시 정지 상태에서 시작
+      hideNotice();
       setStatus('connected');
       acquireWakeLock();
     } catch (error) {
@@ -406,16 +411,54 @@
     if (isFramed()) { showNotice(MESSAGES.framed, 'error'); return; }
     if (!window.isSecureContext) { showNotice(MESSAGES.insecure, 'error'); return; }
     if (!hasBle() && !hasSerial()) { showNotice(MESSAGES.unsupported, 'error'); return; }
-    els.chooseBle.disabled = !hasBle();
-    els.chooseClassic.disabled = !hasSerial();
-    els.bleHint.textContent = hasBle()
-      ? '이름이 Go_Kart_BLE_로 시작하는 고카트'
-      : '이 브라우저는 BLE를 지원하지 않습니다.';
-    els.classicHint.textContent = hasSerial()
-      ? '이름이 Go_Kart_BT_로 시작하는 고카트. 먼저 기기의 블루투스 설정에서 등록(페어링)해 두어야 목록에 나옵니다.'
-      : '이 브라우저는 클래식 블루투스를 지원하지 않습니다.';
+    // 쓸 수 없는 방식도 누를 수는 있게 두고, 누르면 이유와 해결 방법을 알려 준다.
+    // (눌러도 아무 반응이 없으면 사용자가 원인을 알 수 없다)
+    setChoice(els.chooseBle, els.bleHint, bleProblem(),
+      '이름이 Go_Kart_BLE_로 시작하는 고카트. 누르면 브라우저가 장치 고르는 창을 띄웁니다.');
+    setChoice(els.chooseClassic, els.classicHint, classicProblem(),
+      '이름이 Go_Kart_BT_로 시작하는 고카트. 누르면 브라우저의 "직렬 포트" 창이 뜹니다. 먼저 기기의 블루투스 설정에서 등록(페어링)해 두어야 목록에 나옵니다.');
     if (typeof els.dialog.showModal === 'function') els.dialog.showModal();
     else els.dialog.setAttribute('open', '');
+
+    // 블루투스가 꺼져 있는지는 조금 뒤에 알 수 있다. 알게 되면 안내를 바꾼다.
+    if (hasBle() && typeof navigator.bluetooth.getAvailability === 'function') {
+      navigator.bluetooth.getAvailability().then((available) => {
+        bleAdapterOff = !available;
+        if (els.dialog.open) setChoice(els.chooseBle, els.bleHint, bleProblem(), els.bleHint.dataset.normal || '');
+      }).catch(() => { /* 알 수 없으면 그대로 둔다 */ });
+    }
+  }
+
+  function isBrave() {
+    return Boolean(navigator.brave && typeof navigator.brave.isBrave === 'function');
+  }
+
+  // BLE를 쓸 수 없는 이유(쓸 수 있으면 빈 문자열)
+  function bleProblem() {
+    if (!hasBle()) {
+      return isBrave()
+        ? 'Brave에서는 BLE가 기본으로 꺼져 있습니다. 주소창에 brave://flags/#brave-web-bluetooth-api 를 입력해 Enabled로 바꾸고 브라우저를 다시 시작하거나, 크롬·엣지로 열어 주세요.'
+        : '이 브라우저는 BLE를 지원하지 않습니다. 안드로이드 폰이나 PC의 크롬·엣지로 열어 주세요.';
+    }
+    if (bleAdapterOff) return '이 기기의 블루투스가 꺼져 있거나 없습니다. 블루투스를 켠 뒤 다시 눌러 주세요.';
+    return '';
+  }
+
+  function classicProblem() {
+    return hasSerial() ? '' : '이 브라우저는 클래식 블루투스를 지원하지 않습니다. 안드로이드 폰이나 PC의 크롬·엣지(최신 버전)로 열어 주세요.';
+  }
+
+  function setChoice(button, hint, problem, normalText) {
+    hint.dataset.normal = normalText;
+    hint.textContent = problem || normalText;
+    button.dataset.state = problem ? 'off' : 'on';
+  }
+
+  function choose(type) {
+    const problem = type === 'ble' ? bleProblem() : classicProblem();
+    closeConnectDialog();
+    if (problem) { showNotice(problem, 'error'); return; }
+    connect(type);
   }
 
   function closeConnectDialog() {
@@ -486,8 +529,8 @@
       if (status === 'connected') disconnect();
       else if (status === 'idle') openConnectDialog();
     });
-    els.chooseBle.addEventListener('click', () => { closeConnectDialog(); connect('ble'); });
-    els.chooseClassic.addEventListener('click', () => { closeConnectDialog(); connect('classic'); });
+    els.chooseBle.addEventListener('click', () => choose('ble'));
+    els.chooseClassic.addEventListener('click', () => choose('classic'));
     els.dialogCancel.addEventListener('click', closeConnectDialog);
 
     els.pad.addEventListener('pointerdown', onPointerDown);
